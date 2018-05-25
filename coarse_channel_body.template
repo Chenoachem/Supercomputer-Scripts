@@ -1,0 +1,82 @@
+datadir=DATADIR
+proj=PROJ
+obsnum=OBSNUM
+imsize=4000
+ncpus=NCPUS
+threshold=1
+scale=0.0133
+mgain=1
+
+
+
+cd $datadir/$proj/$obsnum/
+
+# For each observation create an image of each coarse channel in the channel range
+
+time $aprun wsclean -name ${obsnum}_coarse -size ${imsize} ${imsize} -niter 400000 -stopnegative -channelsout 24 -joinchannels -threshold ${threshold} -pol I -weight briggs -1.0 -smallinversion -mgain ${mgain} -scale ${scale} -j ${ncpus} -cleanborder 1 ${obsnum}.ms
+
+
+#$aprun wsclean -name ${obsnum}_cube_${chan1} -size ${imsize} ${imsize} -niter 4000 -threshold 2.5 -scale 0.0133 -weight briggs -1.0 -smallinversion -j ${ncpus} -cleanborder 1 -joinchannels -channelsout 24 ${obsnum}.ms
+
+if [[ ! -d ${obsnum}.metafits ]]
+then
+        make_metafits.py -g ${obsnum}
+
+fi
+
+mkdir Coarse_Channels_${imsize}_New
+mv *coarse*.fits Coarse_Channels_${imsize}_New
+cd Coarse_Channels_${imsize}_New
+
+#Make a XX and YY beam model
+start=0
+end=9
+#for (( i=$start; i<=$end; i++ )) ; do make_beam.py -f ${obsnum}_coarse-000$i-image.fits -m ../${obsnum}.metafits  ; done
+for (( i=$start; i<=$end; i++ )) ; do $aprun make_beam.py -f ${obsnum}_coarse-000$i-image.fits -m ../${obsnum}.metafits  ; done
+
+start=10
+end=23
+#for (( i=$start; i<=$end; i++ )) ;do make_beam.py -f ${obsnum}_coarse-00$i-image.fits -m ../${obsnum}.metafits  ; done
+for (( i=$start; i<=$end; i++ )) ; do $aprun make_beam.py -f ${obsnum}_coarse-00$i-image.fits -m ../${obsnum}.metafits  ; done
+
+#Create a psuedo-StokeI beam model for each coarse channel
+
+if [[ ! -d quad.py ]]
+then
+        cp ../../quad.py .
+       
+fi
+
+start=0
+end=9
+for (( i=$start; i<=$end; i++ )) ; do $aprun python quad.py ${obsnum}_coarse-000$i-image_beamXX.fits ${obsnum}_coarse-000$i-image_beamYY.fits ${obsnum}_coarse-000$i-image-beamI.fits  ; done
+
+start=10
+end=23
+for (( i=$start; i<=$end; i++ )) ; do $aprun python quad.py ${obsnum}_coarse-00$i-image_beamXX.fits ${obsnum}_coarse-00$i-image_beamYY.fits ${obsnum}_coarse-00$i-image-beamI.fits  ; done
+
+#Divide our Stokes I image by the Stokes I beam model
+
+if [[ ! -d divide.py ]]
+then
+        cp ../../divide.py .
+        
+fi
+
+start=0
+end=9
+for (( i=$start; i<=$end; i++ )) ; do $aprun python divide.py ${obsnum}_coarse-000$i-image.fits ${obsnum}_coarse-000$i-image-beamI.fits ${obsnum}_pbcorrected-000$i.fits ; done
+
+start=10
+end=23
+for (( i=$start; i<=$end; i++ )) ; do $aprun python divide.py ${obsnum}_coarse-00$i-image.fits ${obsnum}_coarse-00$i-image-beamI.fits ${obsnum}_pbcorrected-00$i.fits ; done
+
+
+#Run Aegean to get out the VO table for each coarse channel
+start=0
+end=9
+for (( i=$start; i<=$end; i++ )) ; do $aprun aegean.py --maxsummits=5 --seedclip=8 --table=${obsnum}_$i.vot ${obsnum}_pbcorrected-000$i.fits  ; done
+
+start=10
+end=23
+for (( i=$start; i<=$end; i++ )) ; do $aprun aegean.py --maxsummits=5 --seedclip=8 --table=${obsnum}_$i.vot ${obsnum}_pbcorrected-00$i.fits ; done
